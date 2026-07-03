@@ -3,6 +3,9 @@
 A native macOS app that turns **images and text into colored ASCII-art banners**
 for the terminal — ideal for a login `motd`, a script header, or a README badge.
 
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/8cf03c8c-046e-4c0d-a64c-60e20201553e" />
+
+
 ## Features
 
 - **Image → ASCII** — open PNG, JPEG, WebP, HEIC, GIF, TIFF or BMP and convert to
@@ -64,4 +67,4 @@ runs off the main thread and is debounced.
 
 ## License
 
-_TBD._
+MIT
