@@ -1,0 +1,18 @@
+FIGlet fonts bundled with Image 2 ASCII
+=======================================
+
+The .flf font files in this folder are part of the standard, freely
+redistributable FIGlet font set from the FIGlet project:
+
+    https://github.com/cmatsuoka/figlet  (fonts/ directory)
+
+These fonts were created by Glenn Chappell, Ian Chai, and other FIGlet
+contributors and are distributed under the FIGlet fonts license, which
+permits free use and redistribution.
+
+Bundled fonts: Standard, Slant, Small, Big, Shadow, Banner, Block, Mini,
+Script, Digital, Lean, Bubble.
+
+Additional fonts can be added by the user at runtime via "Import .flf font…"
+(stored in Application Support), so any font with licensing you are unsure
+about can simply be supplied yourself rather than bundled.
