@@ -136,13 +136,15 @@ nonisolated enum BackgroundMode: String, Codable, Sendable, CaseIterable, Identi
 nonisolated enum GeneratorMode: String, Codable, Sendable, CaseIterable, Identifiable {
     case image
     case text
+    case editor
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .image: return "Image"
-        case .text:  return "Text"
+        case .image:  return "Image"
+        case .text:   return "Text"
+        case .editor: return "Editor"
         }
     }
 }

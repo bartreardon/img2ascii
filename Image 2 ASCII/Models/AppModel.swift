@@ -16,15 +16,42 @@ final class AppModel {
 
     /// All user-tunable parameters. Mutating any field reschedules a conversion.
     var settings = ConversionSettings() {
-        didSet { scheduleRegen() }
+        didSet {
+            // First entry into the editor snapshots the current output.
+            if settings.generatorMode == .editor, oldValue.generatorMode != .editor,
+               !editor.hasEverCaptured {
+                captureIntoEditor()
+            }
+            scheduleRegen()
+        }
     }
+
+    /// The ASCII editor document (independent of the generated output).
+    let editor = EditorDocument()
 
     private(set) var sourceImage: NSImage?
     private(set) var sourcePixelSize: CGSize = .zero
-    private(set) var grid: ASCIIGrid = .empty
+    /// Output of the image/text generators (untouched by editor mode).
+    private(set) var generatedGrid: ASCIIGrid = .empty
     private(set) var preview = AttributedString()
     var errorMessage: String?
     private(set) var isConverting = false
+
+    /// The grid the export/copy pipeline reads: the editor document in editor
+    /// mode, otherwise the generated output.
+    var grid: ASCIIGrid {
+        settings.generatorMode == .editor ? editor.asGrid : generatedGrid
+    }
+
+    /// Flatten the current generated output into the editor (decorations baked in).
+    func captureIntoEditor() {
+        let composed = GridComposer.compose(generatedGrid, colorDepth: settings.colorDepth)
+        if composed.isEmpty {
+            editor.newCanvas()
+        } else {
+            editor.capture(composed)
+        }
+    }
 
     var hasImage: Bool { pixelBuffer != nil }
 
@@ -69,7 +96,7 @@ final class AppModel {
         pixelBuffer = nil
         sourceImage = nil
         sourcePixelSize = .zero
-        grid = .empty
+        generatedGrid = .empty
         preview = AttributedString()
         regenTask?.cancel()
     }
@@ -82,9 +109,16 @@ final class AppModel {
     }
 
     private func scheduleRegen() {
+        // Editor mode never regenerates; the generated output is preserved
+        // so it can be re-captured later.
+        if settings.generatorMode == .editor {
+            regenTask?.cancel()
+            isConverting = false
+            return
+        }
         regenTask?.cancel()
         guard canGenerate else {
-            grid = .empty
+            generatedGrid = .empty
             preview = AttributedString()
             return
         }
@@ -100,7 +134,7 @@ final class AppModel {
                 return (g, a)
             }.value
             if Task.isCancelled { return }
-            self?.grid = result.0
+            self?.generatedGrid = result.0
             self?.preview = result.1
             self?.isConverting = false
         }

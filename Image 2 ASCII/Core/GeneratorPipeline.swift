@@ -14,6 +14,10 @@ nonisolated enum GeneratorPipeline {
 
     static func makeGrid(settings: ConversionSettings, imageBuffer: PixelBuffer?) -> ASCIIGrid {
         switch settings.generatorMode {
+        case .editor:
+            // The editor never regenerates; AppModel guards before calling.
+            return .empty
+
         case .image:
             guard let buffer = imageBuffer else { return .empty }
             return ConversionEngine.convert(buffer, settings: settings)
