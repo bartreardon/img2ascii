@@ -51,6 +51,38 @@ nonisolated enum ANSIColor {
         return grayDist < cubeDist ? (232 + grayIdx) : cubeIndex
     }
 
+    // MARK: Reverse mapping (import)
+
+    /// Default xterm colors for the standard 16 palette entries.
+    static let standard16: [RGBColor] = [
+        RGBColor(r8: 0x00, g8: 0x00, b8: 0x00), RGBColor(r8: 0x80, g8: 0x00, b8: 0x00),
+        RGBColor(r8: 0x00, g8: 0x80, b8: 0x00), RGBColor(r8: 0x80, g8: 0x80, b8: 0x00),
+        RGBColor(r8: 0x00, g8: 0x00, b8: 0x80), RGBColor(r8: 0x80, g8: 0x00, b8: 0x80),
+        RGBColor(r8: 0x00, g8: 0x80, b8: 0x80), RGBColor(r8: 0xC0, g8: 0xC0, b8: 0xC0),
+        RGBColor(r8: 0x80, g8: 0x80, b8: 0x80), RGBColor(r8: 0xFF, g8: 0x00, b8: 0x00),
+        RGBColor(r8: 0x00, g8: 0xFF, b8: 0x00), RGBColor(r8: 0xFF, g8: 0xFF, b8: 0x00),
+        RGBColor(r8: 0x00, g8: 0x00, b8: 0xFF), RGBColor(r8: 0xFF, g8: 0x00, b8: 0xFF),
+        RGBColor(r8: 0x00, g8: 0xFF, b8: 0xFF), RGBColor(r8: 0xFF, g8: 0xFF, b8: 0xFF),
+    ]
+
+    /// RGB for an xterm-256 palette index (exact inverse of `index256` for
+    /// palette members).
+    static func rgb(forIndex256 i: Int) -> RGBColor {
+        let i = min(255, max(0, i))
+        switch i {
+        case 0...15:
+            return standard16[i]
+        case 16...231:
+            let v = i - 16
+            return RGBColor(r8: cubeLevels[v / 36],
+                            g8: cubeLevels[(v / 6) % 6],
+                            b8: cubeLevels[v % 6])
+        default:
+            let g = 8 + 10 * (i - 232)
+            return RGBColor(r8: g, g8: g, b8: g)
+        }
+    }
+
     private static func nearestCubeIndex(_ v: Int) -> Int {
         var best = 0, bestDist = Int.max
         for (i, level) in cubeLevels.enumerated() {

@@ -40,13 +40,19 @@ nonisolated enum ANSIRenderer {
 
         for cell in line {
             if cell.fg != curFg || cell.bg != curBg {
-                // Color changed — emit a fresh SGR.
+                // Color changed — emit an SGR covering exactly the changed
+                // channels; 39/49 restores a channel's default so a stale
+                // color never bleeds into following cells.
                 if cell.fg == nil && cell.bg == nil {
                     out += reset
                 } else {
                     var params: [String] = []
-                    if let fg = cell.fg { params.append(ANSIColor.foregroundParams(fg, depth: depth)) }
-                    if let bg = cell.bg { params.append(ANSIColor.backgroundParams(bg, depth: depth)) }
+                    if cell.fg != curFg {
+                        params.append(cell.fg.map { ANSIColor.foregroundParams($0, depth: depth) } ?? "39")
+                    }
+                    if cell.bg != curBg {
+                        params.append(cell.bg.map { ANSIColor.backgroundParams($0, depth: depth) } ?? "49")
+                    }
                     out += "\(esc)[\(params.joined(separator: ";"))m"
                     anyColor = true
                 }
