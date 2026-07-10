@@ -55,7 +55,11 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         VStack(spacing: 0) {
-            if model.settings.generatorMode == .text {
+            if model.settings.generatorMode == .editor {
+                EditorToolbar(document: model.editor)
+                Divider()
+                EditorCanvasView(document: model.editor)
+            } else if model.settings.generatorMode == .text {
                 DualPreviewView(text: model.preview, isEmpty: model.grid.rows == 0)
             } else if model.hasImage {
                 sourceBar

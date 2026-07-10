@@ -12,7 +12,8 @@ struct ControlsPanel: View {
 
     /// Image-density controls apply to images and the rasterized text engine.
     private var showsImageControls: Bool {
-        model.settings.generatorMode == .image || model.settings.textEngine == .rasterized
+        model.settings.generatorMode == .image
+            || (model.settings.generatorMode == .text && model.settings.textEngine == .rasterized)
     }
 
     var body: some View {
@@ -25,19 +26,23 @@ struct ControlsPanel: View {
                 .labelsHidden()
             }
 
-            if model.settings.generatorMode == .text {
-                textSection
-                fontSection
-            }
+            if model.settings.generatorMode == .editor {
+                EditorControls(model: model)
+            } else {
+                if model.settings.generatorMode == .text {
+                    textSection
+                    fontSection
+                }
 
-            if showsImageControls {
-                outputSection
-                charactersSection
+                if showsImageControls {
+                    outputSection
+                    charactersSection
+                }
+                colorSection
+                backgroundSection
+                borderSection
+                infoSection
             }
-            colorSection
-            backgroundSection
-            borderSection
-            infoSection
         }
         .formStyle(.grouped)
     }
