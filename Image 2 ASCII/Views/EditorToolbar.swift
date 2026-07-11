@@ -19,6 +19,7 @@ struct EditorToolbar: View {
                     ForEach(EditorTool.allCases) { tool in
                         Image(systemName: tool.systemImage)
                             .help(tool.label)
+                            .accessibilityLabel(tool.label)
                             .tag(tool)
                     }
                 }
@@ -50,6 +51,7 @@ struct EditorToolbar: View {
                 }
                 .disabled(!document.canUndo)
                 .help("Undo (⌘Z)")
+                .accessibilityLabel("Undo")
 
                 Button {
                     document.redo()
@@ -58,18 +60,21 @@ struct EditorToolbar: View {
                 }
                 .disabled(!document.canRedo)
                 .help("Redo (⇧⌘Z)")
+                .accessibilityLabel("Redo")
 
                 Toggle(isOn: $document.showGrid) {
                     Image(systemName: "grid")
                 }
                 .toggleStyle(.button)
                 .help("Show character grid")
+                .accessibilityLabel("Show character grid")
 
                 Toggle(isOn: $document.showRulers) {
                     Image(systemName: "ruler")
                 }
                 .toggleStyle(.button)
                 .help("Show rulers")
+                .accessibilityLabel("Show rulers")
 
                 Picker("Canvas", selection: $document.canvasScheme) {
                     Text("Dark").tag(ColorScheme.dark)
@@ -103,12 +108,14 @@ struct EditorToolbar: View {
             ColorPicker("", selection: fgBinding, supportsOpacity: false)
                 .labelsHidden()
                 .disabled(document.fgColor == nil)
+                .accessibilityLabel("Foreground color")
             Toggle(isOn: bgEnabled) { Text("BG") }
                 .toggleStyle(.checkbox)
                 .help("Background color (off = none)")
             ColorPicker("", selection: bgBinding, supportsOpacity: false)
                 .labelsHidden()
                 .disabled(document.bgColor == nil)
+                .accessibilityLabel("Background color")
         }
     }
 

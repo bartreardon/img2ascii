@@ -30,6 +30,30 @@ final class AppModel {
     /// The ASCII editor document (independent of the generated output).
     let editor = EditorDocument()
 
+    init() {
+        applyDefaults()
+    }
+
+    /// Seed a new window's settings from the persisted app preferences.
+    private func applyDefaults() {
+        let d = UserDefaults.standard
+        if let raw = d.string(forKey: DefaultsKey.colorDepth),
+           let depth = ANSIColorDepth(rawValue: raw) {
+            settings.colorDepth = depth
+        }
+        if let ramp = d.string(forKey: DefaultsKey.rampName) {
+            settings.rampName = ramp
+        }
+        if let size = d.object(forKey: DefaultsKey.editorFontSize) as? Double {
+            editor.fontSize = size
+        }
+        editor.showGrid = d.bool(forKey: DefaultsKey.editorShowGrid)
+        editor.showRulers = d.bool(forKey: DefaultsKey.editorShowRulers)
+        if d.string(forKey: DefaultsKey.editorScheme) == "light" {
+            editor.canvasScheme = .light
+        }
+    }
+
     private(set) var sourceImage: NSImage?
     private(set) var sourcePixelSize: CGSize = .zero
     /// Output of the image/text generators (untouched by editor mode).

@@ -153,6 +153,19 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
         document.undoManager = window?.undoManager
     }
 
+    // MARK: Accessibility
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .layoutArea }
+    override func accessibilityLabel() -> String? { "ASCII canvas" }
+
+    override func accessibilityValue() -> Any? {
+        var parts = ["\(document.cols) by \(document.rows) characters", "\(document.tool.label) tool"]
+        if let cur = document.cursor { parts.append("cursor at column \(cur.col + 1), row \(cur.row + 1)") }
+        if let sel = document.selection { parts.append("selection \(sel.width) by \(sel.height)") }
+        return parts.joined(separator: ", ")
+    }
+
     var schemeBackground: NSColor {
         document.canvasScheme == .dark
             ? NSColor(calibratedRed: 0.09, green: 0.09, blue: 0.11, alpha: 1)

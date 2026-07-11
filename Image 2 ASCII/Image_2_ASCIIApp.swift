@@ -14,5 +14,9 @@ struct Image_2_ASCIIApp: App {
             ContentView()
         }
         .commands { AppCommands() }
+
+        Settings {
+            SettingsView()
+        }
     }
 }
