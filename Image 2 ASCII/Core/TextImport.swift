@@ -36,30 +36,35 @@ nonisolated enum TextImport {
         guard let obj = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
         else { return nil }
 
-        var payloads: [String: Data] = [:]
+        var payloads: [String: Any] = [:]
         collect(obj, into: &payloads)
 
-        // Prefer UTF-8 plain text, then other plain-text representations.
+        // Prefer UTF-8 plain text, then other plain-text representations. Payloads
+        // may be a plist String (clippings store utf8 text this way) or raw Data.
         let priority = ["public.utf8-plain-text", "public.plain-text",
+                        "com.apple.traditional-mac-plain-text",
                         "public.utf16-plain-text", "public.utf16-external-plain-text", "public.text"]
         for uti in priority {
-            guard let d = payloads[uti] else { continue }
-            let encoding: String.Encoding = uti.contains("utf16") ? .utf16 : .utf8
-            if let s = String(data: d, encoding: encoding) ?? String(data: d, encoding: .utf8) {
-                return s
+            guard let value = payloads[uti] else { continue }
+            if let s = value as? String { return s }
+            if let d = value as? Data {
+                let encoding: String.Encoding = uti.contains("utf16") ? .utf16 : .utf8
+                if let s = String(data: d, encoding: encoding) ?? String(data: d, encoding: .utf8) {
+                    return s
+                }
             }
         }
         return nil
     }
 
-    /// Walk the plist collecting every UTI→Data pair, in either the
-    /// `{ uti: data }` or `{ "UTI": uti, "Data": data }` shape.
-    private static func collect(_ any: Any, into payloads: inout [String: Data]) {
+    /// Walk the plist collecting every UTI→payload pair, in either the
+    /// `{ uti: string|data }` or `{ "UTI": uti, "Data": data }` shape.
+    private static func collect(_ any: Any, into payloads: inout [String: Any]) {
         if let dict = any as? [String: Any] {
             for (key, value) in dict where key.hasPrefix("public.") || key.hasPrefix("com.") {
-                if let d = value as? Data { payloads[key] = d }
+                if value is String || value is Data { payloads[key] = value }
             }
-            if let uti = dict["UTI"] as? String, let d = dict["Data"] as? Data {
+            if let uti = dict["UTI"] as? String, let d = dict["Data"] {
                 payloads[uti] = d
             }
             for value in dict.values { collect(value, into: &payloads) }
