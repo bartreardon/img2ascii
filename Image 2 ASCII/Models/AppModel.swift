@@ -99,11 +99,11 @@ final class AppModel {
         guard let url = ExportService.openFile(contentTypes: [.plainText, .text, .data]) else { return }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else {
+        guard let text = TextImport.text(fromFileAt: url) else {
             errorMessage = "Couldn’t read \(url.lastPathComponent)."
             return
         }
-        loadEditorText(String(decoding: data, as: UTF8.self))
+        loadEditorText(text)
     }
 
     /// Load a dropped text/ANSI file into the editor. Returns whether it loaded.
@@ -112,8 +112,8 @@ final class AppModel {
         guard let url else { return false }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { return false }
-        loadEditorText(String(decoding: data, as: UTF8.self))
+        guard let text = TextImport.text(fromFileAt: url) else { return false }
+        loadEditorText(text)
         return true
     }
 
