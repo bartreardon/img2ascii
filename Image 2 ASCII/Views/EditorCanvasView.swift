@@ -2,12 +2,11 @@
 //  EditorCanvasView.swift
 //  Image 2 ASCII
 //
-//  The editable ASCII canvas: a custom NSView (in an NSScrollView) that draws
-//  the editor document's cells with CoreText — the same CTLine-per-row
-//  technique and Menlo metrics as PNGRenderer — and translates mouse/keyboard
-//  events into EditorDocument mutations. Local edits invalidate only the dirty
-//  cell rect; external changes (undo, import, zoom, scheme) arrive through
-//  updateNSView observing the document.
+//  The editable ASCII canvas: a custom NSView (in an NSScrollView with optional
+//  character rulers) that draws the editor document's cells with CoreText and
+//  translates mouse/keyboard events into EditorDocument mutations. Glyphs are
+//  positioned on an exact `col*cellW / row*lineH` grid (via CTFontDrawGlyphs)
+//  so the cursor, hit-testing, backgrounds and glyphs always align.
 //
 
 import SwiftUI
@@ -26,20 +25,44 @@ struct EditorCanvasView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.drawsBackground = true
-        scroll.backgroundColor = canvas.schemeBackground
+
+        scroll.hasHorizontalRuler = true
+        scroll.hasVerticalRuler = true
+        let hRuler = CharacterRulerView(scrollView: scroll, orientation: .horizontalRuler)
+        hRuler.clientView = canvas
+        scroll.horizontalRulerView = hRuler
+        let vRuler = CharacterRulerView(scrollView: scroll, orientation: .verticalRuler)
+        vRuler.clientView = canvas
+        scroll.verticalRulerView = vRuler
+
         canvas.updateGeometry()
+        applyChrome(scroll, canvas: canvas)
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let canvas = scroll.documentView as? EditorCanvasNSView else { return }
-        // Read observable properties so SwiftUI re-runs this update on change.
+        // Touch observable properties so SwiftUI re-runs update on change.
         _ = document.revision
         _ = document.fontSize
         _ = document.canvasScheme
         _ = document.tool
+        _ = document.showGrid
+        _ = document.showRulers
         canvas.sync()
+        applyChrome(scroll, canvas: canvas)
+    }
+
+    private func applyChrome(_ scroll: NSScrollView, canvas: EditorCanvasNSView) {
+        scroll.appearance = NSAppearance(named: document.canvasScheme == .dark ? .darkAqua : .aqua)
         scroll.backgroundColor = canvas.schemeBackground
+        scroll.rulersVisible = document.showRulers
+        for ruler in [scroll.horizontalRulerView, scroll.verticalRulerView] {
+            guard let r = ruler as? CharacterRulerView else { continue }
+            r.cellW = canvas.cellSize.width
+            r.lineH = canvas.cellSize.height
+            r.needsDisplay = true
+        }
     }
 }
 
@@ -50,22 +73,23 @@ final class EditorCanvasNSView: NSView {
 
     private let document: EditorDocument
 
-    // Geometry (derived from fontSize via PNGRenderer.metrics)
+    // Geometry (from PNGRenderer.metrics — shared with PNG export).
     private var cellW: CGFloat = 8
     private var lineH: CGFloat = 16
     private var ascent: CGFloat = 12
     private var appliedFontSize: Double = 0
     private var font: CTFont = CTFontCreateWithName(PNGRenderer.fontName as CFString, 14, nil)
+    private var glyphCache: [Character: CGGlyph] = [:]
+
+    var cellSize: CGSize { CGSize(width: cellW, height: lineH) }
 
     /// Extra clickable margin beyond the grid for auto-grow.
     private let marginCols = 8
     private let marginRows = 4
 
-    // Local-edit fast path bookkeeping
     private var lastSeenRevision = -1
     private var appliedScheme: ColorScheme = .dark
 
-    // Interaction state
     private var lastPaintCell: GridPoint?
     private var selectionAnchor: GridPoint?
     private var cursorVisible = true
@@ -80,9 +104,7 @@ final class EditorCanvasNSView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    deinit {
-        blinkTimer?.invalidate()
-    }
+    deinit { blinkTimer?.invalidate() }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -93,23 +115,32 @@ final class EditorCanvasNSView: NSView {
             : NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.97, alpha: 1)
     }
 
-    private var defaultGlyphColor: CGColor {
+    private var defaultGlyphCGColor: CGColor {
         document.canvasScheme == .dark
             ? CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1)
             : CGColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1)
     }
 
-    // MARK: Sync from SwiftUI
+    private var edgeColor: NSColor {
+        document.canvasScheme == .dark
+            ? NSColor(calibratedWhite: 0.5, alpha: 0.8)
+            : NSColor(calibratedWhite: 0.4, alpha: 0.7)
+    }
 
-    /// Called from updateNSView whenever observed document state changes.
+    private var gridColor: CGColor {
+        document.canvasScheme == .dark
+            ? CGColor(gray: 1, alpha: 0.08)
+            : CGColor(gray: 0, alpha: 0.08)
+    }
+
+    // MARK: Sync
+
     func sync() {
         var needsFull = false
-        if document.fontSize != appliedFontSize {
-            updateGeometry()
-            needsFull = true
-        }
+        if document.fontSize != appliedFontSize { updateGeometry(); needsFull = true }
         if document.canvasScheme != appliedScheme {
             appliedScheme = document.canvasScheme
+            appearance = NSAppearance(named: appliedScheme == .dark ? .darkAqua : .aqua)
             needsFull = true
         }
         if document.revision != lastSeenRevision {
@@ -127,6 +158,7 @@ final class EditorCanvasNSView: NSView {
         lineH = m.lineH
         ascent = m.ascent
         font = CTFontCreateWithName(PNGRenderer.fontName as CFString, appliedFontSize, nil)
+        glyphCache.removeAll(keepingCapacity: true)
         updateFrameSize()
     }
 
@@ -142,100 +174,107 @@ final class EditorCanvasNSView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        // Background.
         ctx.setFillColor(schemeBackground.cgColor)
         ctx.fill(dirtyRect)
 
         let cells = document.cells
-        guard !cells.isEmpty else {
-            drawGridEdge(ctx)
-            return
-        }
+        if document.showGrid { drawGrid(ctx, dirtyRect: dirtyRect) }
 
-        let firstRow = max(0, Int(dirtyRect.minY / lineH))
-        let lastRow = min(cells.count - 1, Int(dirtyRect.maxY / lineH))
-        guard firstRow <= lastRow else {
-            drawGridEdge(ctx)
-            drawOverlays(ctx)
-            return
-        }
-
-        // Pass 1: cell backgrounds.
-        for r in firstRow...lastRow {
-            let y = CGFloat(r) * lineH
-            for (c, cell) in cells[r].enumerated() {
-                guard let bg = cell.bg else { continue }
-                ctx.setFillColor(CGColor(red: bg.r, green: bg.g, blue: bg.b, alpha: 1))
-                ctx.fill(CGRect(x: CGFloat(c) * cellW, y: y, width: cellW, height: lineH))
+        if !cells.isEmpty {
+            let firstRow = max(0, Int(dirtyRect.minY / lineH))
+            let lastRow = min(cells.count - 1, Int(dirtyRect.maxY / lineH))
+            if firstRow <= lastRow {
+                // Pass 1: cell backgrounds.
+                for r in firstRow...lastRow {
+                    let y = CGFloat(r) * lineH
+                    for (c, cell) in cells[r].enumerated() {
+                        guard let bg = cell.bg else { continue }
+                        ctx.setFillColor(CGColor(red: bg.r, green: bg.g, blue: bg.b, alpha: 1))
+                        ctx.fill(CGRect(x: CGFloat(c) * cellW, y: y, width: cellW, height: lineH))
+                    }
+                }
+                // Pass 2: glyphs on the exact grid.
+                drawGlyphs(ctx, cells: cells, firstRow: firstRow, lastRow: lastRow)
             }
         }
-
-        // Pass 2: glyph runs (CTLine per row; view is flipped so un-flip for text).
-        ctx.saveGState()
-        ctx.textMatrix = .identity
-        ctx.translateBy(x: 0, y: bounds.height)
-        ctx.scaleBy(x: 1, y: -1)
-        for r in firstRow...lastRow {
-            let line = ctLine(forRow: cells[r])
-            // In the flipped-back coordinate space, row r's baseline:
-            let baseline = bounds.height - (CGFloat(r) * lineH + ascent)
-            ctx.textPosition = CGPoint(x: 0, y: baseline)
-            CTLineDraw(line, ctx)
-        }
-        ctx.restoreGState()
 
         drawGridEdge(ctx)
         drawOverlays(ctx)
     }
 
-    private func ctLine(forRow row: [ASCIICell]) -> CTLine {
-        let astr = NSMutableAttributedString()
-        var runText = ""
-        var runColor: CGColor? = nil
-        var started = false
+    private func drawGlyphs(_ ctx: CGContext, cells: [[ASCIICell]], firstRow: Int, lastRow: Int) {
+        ctx.saveGState()
+        ctx.textMatrix = .identity
+        ctx.translateBy(x: 0, y: bounds.height)
+        ctx.scaleBy(x: 1, y: -1)
 
-        func flush() {
-            guard !runText.isEmpty else { return }
-            let attrs: [NSAttributedString.Key: Any] = [
-                .init(kCTFontAttributeName as String): font,
-                .init(kCTForegroundColorAttributeName as String): runColor ?? defaultGlyphColor,
-                .init(kCTLigatureAttributeName as String): NSNumber(value: 0),
-            ]
-            astr.append(NSAttributedString(string: runText, attributes: attrs))
-            runText = ""
-        }
+        var glyphs: [CGGlyph] = []
+        var positions: [CGPoint] = []
+        var runColor = defaultGlyphCGColor
 
-        for cell in row {
-            let color: CGColor? = cell.fg.map { CGColor(red: $0.r, green: $0.g, blue: $0.b, alpha: 1) }
-            if !started {
-                runColor = color
-                started = true
-            } else if !colorsEqual(color, runColor) {
-                flush()
-                runColor = color
+        for r in firstRow...lastRow {
+            let baseline = bounds.height - (CGFloat(r) * lineH + ascent)
+            glyphs.removeAll(keepingCapacity: true)
+            positions.removeAll(keepingCapacity: true)
+            runColor = defaultGlyphCGColor
+
+            func flush() {
+                guard !glyphs.isEmpty else { return }
+                ctx.setFillColor(runColor)
+                CTFontDrawGlyphs(font, glyphs, positions, glyphs.count, ctx)
+                glyphs.removeAll(keepingCapacity: true)
+                positions.removeAll(keepingCapacity: true)
             }
-            runText.append(cell.glyph)
+
+            for (c, cell) in cells[r].enumerated() {
+                guard cell.glyph != " ", let g = glyph(for: cell.glyph) else { continue }
+                let color = cell.fg.map { CGColor(red: $0.r, green: $0.g, blue: $0.b, alpha: 1) }
+                    ?? defaultGlyphCGColor
+                if color != runColor { flush(); runColor = color }
+                glyphs.append(g)
+                positions.append(CGPoint(x: CGFloat(c) * cellW, y: baseline))
+            }
+            flush()
         }
-        flush()
-        return CTLineCreateWithAttributedString(astr)
+        ctx.restoreGState()
     }
 
-    private func colorsEqual(_ a: CGColor?, _ b: CGColor?) -> Bool {
-        switch (a, b) {
-        case (nil, nil): return true
-        case let (x?, y?): return x == y
-        default: return false
-        }
+    private func glyph(for ch: Character) -> CGGlyph? {
+        if let cached = glyphCache[ch] { return cached == 0 ? nil : cached }
+        let utf16 = Array(String(ch).utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
+        let ok = CTFontGetGlyphsForCharacters(font, utf16, &glyphs, utf16.count)
+        let g = ok ? glyphs[0] : 0
+        glyphCache[ch] = g
+        return g == 0 ? nil : g
     }
 
-    /// Dashed line marking the grid's right/bottom edge (the auto-grow margin
-    /// lies beyond it).
+    private func drawGrid(_ ctx: CGContext, dirtyRect: NSRect) {
+        let cols = document.cols, rows = document.rows
+        guard cols > 0, rows > 0 else { return }
+        let w = CGFloat(cols) * cellW, h = CGFloat(rows) * lineH
+        ctx.saveGState()
+        ctx.setStrokeColor(gridColor)
+        ctx.setLineWidth(1)
+        let path = CGMutablePath()
+        for c in 0...cols {
+            let x = CGFloat(c) * cellW
+            path.move(to: CGPoint(x: x, y: 0)); path.addLine(to: CGPoint(x: x, y: h))
+        }
+        for r in 0...rows {
+            let y = CGFloat(r) * lineH
+            path.move(to: CGPoint(x: 0, y: y)); path.addLine(to: CGPoint(x: w, y: y))
+        }
+        ctx.addPath(path); ctx.strokePath()
+        ctx.restoreGState()
+    }
+
     private func drawGridEdge(_ ctx: CGContext) {
         let w = CGFloat(document.cols) * cellW
         let h = CGFloat(document.rows) * lineH
         guard w > 0, h > 0 else { return }
         ctx.saveGState()
-        ctx.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
+        ctx.setStrokeColor(edgeColor.cgColor)
         ctx.setLineDash(phase: 0, lengths: [3, 3])
         ctx.setLineWidth(1)
         ctx.stroke(CGRect(x: 0.5, y: 0.5, width: w, height: h))
@@ -243,7 +282,6 @@ final class EditorCanvasNSView: NSView {
     }
 
     private func drawOverlays(_ ctx: CGContext) {
-        // Selection overlay.
         if let sel = document.selection {
             let rect = rectForCells(sel)
             ctx.setFillColor(NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor)
@@ -252,8 +290,6 @@ final class EditorCanvasNSView: NSView {
             ctx.setLineWidth(1)
             ctx.stroke(rect.insetBy(dx: 0.5, dy: 0.5))
         }
-
-        // Cursor (line/text tool).
         if document.tool == .line, let cur = document.cursor, cursorVisible {
             let rect = rectForCells(GridRect(cur, cur))
             ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
@@ -265,18 +301,14 @@ final class EditorCanvasNSView: NSView {
     // MARK: Geometry helpers
 
     private func rectForCells(_ r: GridRect) -> CGRect {
-        CGRect(x: CGFloat(r.minCol) * cellW,
-               y: CGFloat(r.minRow) * lineH,
-               width: CGFloat(r.width) * cellW,
-               height: CGFloat(r.height) * lineH)
+        CGRect(x: CGFloat(r.minCol) * cellW, y: CGFloat(r.minRow) * lineH,
+               width: CGFloat(r.width) * cellW, height: CGFloat(r.height) * lineH)
     }
 
     private func cellAt(_ point: NSPoint) -> GridPoint {
-        GridPoint(col: max(0, Int(point.x / cellW)),
-                  row: max(0, Int(point.y / lineH)))
+        GridPoint(col: max(0, Int(point.x / cellW)), row: max(0, Int(point.y / lineH)))
     }
 
-    /// Invalidate a cell region (plus one cell of slack for the cursor ring).
     private func invalidate(_ r: GridRect) {
         setNeedsDisplay(rectForCells(r).insetBy(dx: -cellW, dy: -lineH))
         lastSeenRevision = document.revision
@@ -288,7 +320,6 @@ final class EditorCanvasNSView: NSView {
         window?.makeFirstResponder(self)
         let cell = cellAt(convert(event.locationInWindow, from: nil))
         document.breakUndoCoalescing()
-
         switch document.tool {
         case .paint, .eraser:
             document.beginStroke()
@@ -303,28 +334,24 @@ final class EditorCanvasNSView: NSView {
         case .select:
             selectionAnchor = cell
             document.setSelection(GridRect(cell, cell))
-            needsDisplay = true
-            lastSeenRevision = document.revision
+            fullInvalidate()
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
         autoscroll(with: event)
         let cell = cellAt(convert(event.locationInWindow, from: nil))
-
         switch document.tool {
         case .paint, .eraser:
             guard cell != lastPaintCell else { return }
-            let dirty = document.stroke(from: lastPaintCell, to: cell,
-                                        erase: document.tool == .eraser)
+            let dirty = document.stroke(from: lastPaintCell, to: cell, erase: document.tool == .eraser)
             lastPaintCell = cell
             updateFrameSize()
             invalidate(dirty)
         case .select:
             guard let anchor = selectionAnchor else { return }
             document.setSelection(GridRect(anchor, cell))
-            needsDisplay = true
-            lastSeenRevision = document.revision
+            fullInvalidate()
         case .line:
             break
         }
@@ -339,11 +366,7 @@ final class EditorCanvasNSView: NSView {
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
-        // Let ⌘-shortcuts (undo etc.) travel the responder chain.
-        if event.modifierFlags.contains(.command) {
-            super.keyDown(with: event)
-            return
-        }
+        if event.modifierFlags.contains(.command) { super.keyDown(with: event); return }
 
         if let special = event.specialKey {
             switch special {
@@ -351,31 +374,15 @@ final class EditorCanvasNSView: NSView {
             case .downArrow:  handleArrow(.down); return
             case .leftArrow:  handleArrow(.left); return
             case .rightArrow: handleArrow(.right); return
-            case .delete:     // Backspace
-                document.backspace()
-                fullInvalidate()
-                return
-            case .deleteForward:
-                document.deleteForward()
-                fullInvalidate()
-                return
+            case .delete:     document.backspace(); fullInvalidate(); return
+            case .deleteForward: document.deleteForward(); fullInvalidate(); return
             case .carriageReturn, .enter:
-                document.carriageReturn()
-                updateFrameSize()
-                fullInvalidate()
-                return
-            default:
-                break
+                document.carriageReturn(); updateFrameSize(); fullInvalidate(); return
+            default: break
             }
         }
+        if event.keyCode == 53 { document.escape(); fullInvalidate(); return }   // Escape
 
-        if event.keyCode == 53 {   // Escape
-            document.escape()
-            fullInvalidate()
-            return
-        }
-
-        // Printable characters: type at the cursor (line/text tool).
         if document.tool == .line,
            let chars = event.charactersIgnoringModifiers,
            let ch = chars.first,
@@ -385,7 +392,6 @@ final class EditorCanvasNSView: NSView {
             fullInvalidate()
             return
         }
-
         super.keyDown(with: event)
     }
 
@@ -414,5 +420,53 @@ final class EditorCanvasNSView: NSView {
                 }
             }
         }
+    }
+}
+
+// MARK: - Character ruler
+
+/// An NSRulerView that labels character columns / rows instead of points.
+@MainActor
+final class CharacterRulerView: NSRulerView {
+    var cellW: CGFloat = 8
+    var lineH: CGFloat = 16
+
+    override var isFlipped: Bool { true }
+
+    override func drawHashMarksAndLabels(in rect: NSRect) {
+        guard let client = clientView else { return }
+        let horizontal = orientation == .horizontalRuler
+        let step = horizontal ? cellW : lineH
+        guard step > 2 else { return }
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 8, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let path = NSBezierPath()
+        path.lineWidth = 1
+        NSColor.separatorColor.setStroke()
+
+        let count = Int((horizontal ? client.bounds.width : client.bounds.height) / step) + 1
+        for i in 0...count {
+            let docPoint = horizontal ? NSPoint(x: CGFloat(i) * step, y: 0)
+                                      : NSPoint(x: 0, y: CGFloat(i) * step)
+            let p = convert(docPoint, from: client)
+            let pos = horizontal ? p.x : p.y
+            if pos < -20 || pos > (horizontal ? rect.maxX : rect.maxY) + 20 { continue }
+
+            let major = i % 5 == 0
+            let t = ruleThickness
+            if horizontal {
+                path.move(to: NSPoint(x: pos, y: major ? t - 6 : t - 3))
+                path.line(to: NSPoint(x: pos, y: t))
+                if major { (("\(i)") as NSString).draw(at: NSPoint(x: pos + 1, y: 1), withAttributes: attrs) }
+            } else {
+                path.move(to: NSPoint(x: major ? t - 6 : t - 3, y: pos))
+                path.line(to: NSPoint(x: t, y: pos))
+                if major { (("\(i)") as NSString).draw(at: NSPoint(x: 1, y: pos + 1), withAttributes: attrs) }
+            }
+        }
+        path.stroke()
     }
 }

@@ -40,6 +40,9 @@ final class EditorDocument {
     var fgColor: RGBColor? = .white
     /// nil = no background.
     var bgColor: RGBColor? = nil
+    /// Last chosen colors, remembered across the FG/BG on-off toggles.
+    var fgColorValue: RGBColor = .white
+    var bgColorValue: RGBColor = .black
     var lineStyle: BorderStyle = .square
     var recentGlyphs: [Character] = []
     var selFgFill = SelectionFillSpec()
@@ -49,6 +52,8 @@ final class EditorDocument {
 
     var canvasScheme: ColorScheme = .dark
     var fontSize: Double = 14
+    var showGrid = false
+    var showRulers = false
     private(set) var hasEverCaptured = false
 
     // MARK: Undo

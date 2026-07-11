@@ -17,7 +17,9 @@ struct EditorToolbar: View {
             HStack(spacing: 12) {
                 Picker("Tool", selection: $document.tool) {
                     ForEach(EditorTool.allCases) { tool in
-                        Label(tool.label, systemImage: tool.systemImage).tag(tool)
+                        Image(systemName: tool.systemImage)
+                            .help(tool.label)
+                            .tag(tool)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -59,6 +61,18 @@ struct EditorToolbar: View {
                 .disabled(!document.canRedo)
                 .help("Redo (⇧⌘Z)")
 
+                Toggle(isOn: $document.showGrid) {
+                    Image(systemName: "grid")
+                }
+                .toggleStyle(.button)
+                .help("Show character grid")
+
+                Toggle(isOn: $document.showRulers) {
+                    Image(systemName: "ruler")
+                }
+                .toggleStyle(.button)
+                .help("Show rulers")
+
                 Picker("Canvas", selection: $document.canvasScheme) {
                     Text("Dark").tag(ColorScheme.dark)
                     Text("Light").tag(ColorScheme.light)
@@ -88,35 +102,33 @@ struct EditorToolbar: View {
             Toggle(isOn: fgEnabled) { Text("FG") }
                 .toggleStyle(.checkbox)
                 .help("Foreground color (off = terminal default)")
-            if document.fgColor != nil {
-                ColorPicker("", selection: fgBinding, supportsOpacity: false)
-                    .labelsHidden()
-            }
+            ColorPicker("", selection: fgBinding, supportsOpacity: false)
+                .labelsHidden()
+                .disabled(document.fgColor == nil)
             Toggle(isOn: bgEnabled) { Text("BG") }
                 .toggleStyle(.checkbox)
                 .help("Background color (off = none)")
-            if document.bgColor != nil {
-                ColorPicker("", selection: bgBinding, supportsOpacity: false)
-                    .labelsHidden()
-            }
+            ColorPicker("", selection: bgBinding, supportsOpacity: false)
+                .labelsHidden()
+                .disabled(document.bgColor == nil)
         }
     }
 
     private var fgEnabled: Binding<Bool> {
         Binding(get: { document.fgColor != nil },
-                set: { document.fgColor = $0 ? .white : nil })
+                set: { document.fgColor = $0 ? document.fgColorValue : nil })
     }
     private var bgEnabled: Binding<Bool> {
         Binding(get: { document.bgColor != nil },
-                set: { document.bgColor = $0 ? .black : nil })
+                set: { document.bgColor = $0 ? document.bgColorValue : nil })
     }
     private var fgBinding: Binding<Color> {
-        Binding(get: { (document.fgColor ?? .white).color },
-                set: { document.fgColor = RGBColor($0) })
+        Binding(get: { document.fgColorValue.color },
+                set: { document.fgColorValue = RGBColor($0); document.fgColor = RGBColor($0) })
     }
     private var bgBinding: Binding<Color> {
-        Binding(get: { (document.bgColor ?? .black).color },
-                set: { document.bgColor = RGBColor($0) })
+        Binding(get: { document.bgColorValue.color },
+                set: { document.bgColorValue = RGBColor($0); document.bgColor = RGBColor($0) })
     }
 
     // MARK: Glyph palettes

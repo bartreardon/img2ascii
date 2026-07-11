@@ -93,10 +93,10 @@ nonisolated enum EditorTool: String, Sendable, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .paint:  return "paintbrush.pointed"
+        case .paint:  return "paintbrush"
         case .eraser: return "eraser"
-        case .line:   return "pencil.line"
-        case .select: return "rectangle.dashed"
+        case .line:   return "character.cursor.ibeam"
+        case .select: return "selection.pin.in.out"
         }
     }
 }
