@@ -28,6 +28,20 @@ for the terminal — ideal for a login `motd`, a script header, or a README badg
 - **Export** — colored ANSI `.txt` (raw escape codes, motd-ready), plain `.txt`,
   a **transparent-background PNG** at a chosen resolution, or copy to the clipboard.
 
+## Install
+
+### Homebrew
+
+```sh
+brew install --cask bartreardon/tap/image-2-ascii
+```
+
+### Manual
+
+Download the latest signed, notarized build from the
+[releases page](https://github.com/bartreardon/img2ascii/releases), unzip it,
+and drag **Image 2 ASCII.app** to your Applications folder.
+
 ## Requirements
 
 - macOS 26 (Tahoe) or later
