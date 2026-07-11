@@ -2,6 +2,10 @@
 
 ### New: ASCII Editor
 Turn any generated banner — or a blank canvas — into something you can hand-tweak.
+
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/30224129-12b4-4620-8a4a-fa975c1641c6" />
+
+
 - **Paint, Eraser, Line/Text, and Select** tools
 - **Draw box-drawing lines with the arrow keys** — corners are inserted automatically (rounded / square / heavy / double)
 - **Cursor navigation in every tool:** arrows move, **Space** paints, **Delete** erases, **Shift-arrow** selects
