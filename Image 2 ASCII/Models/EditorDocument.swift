@@ -58,19 +58,33 @@ final class EditorDocument {
     var lockedSize = false
     private(set) var hasEverCaptured = false
 
-    // MARK: Undo
+    // MARK: Undo (via the window's NSUndoManager)
 
-    private struct Snapshot {
-        var cells: [[ASCIICell]]
-        var cursor: GridPoint?
-    }
-    private var undoStack: [Snapshot] = []
-    private var redoStack: [Snapshot] = []
+    /// The window's undo manager, injected by the canvas view. Mutations register
+    /// their inverse here so the standard Edit ▸ Undo/Redo menu drives the editor.
+    weak var undoManager: UndoManager?
     private var strokeActive = false
-    private static let undoLimit = 50
 
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
+    var canUndo: Bool { undoManager?.canUndo ?? false }
+    var canRedo: Bool { undoManager?.canRedo ?? false }
+
+    func undo() { undoManager?.undo() }
+    func redo() { undoManager?.redo() }
+
+    /// Snapshot current state and register the inverse (which re-registers redo).
+    private func registerUndo(name: String) {
+        guard let um = undoManager else { return }
+        let oldCells = cells
+        let oldCursor = cursor
+        um.registerUndo(withTarget: self) { doc in
+            doc.registerUndo(name: name)
+            doc.cells = oldCells
+            doc.cursor = oldCursor
+            doc.lineDirection = nil
+            doc.bump()
+        }
+        um.setActionName(name)
+    }
 
     // MARK: - Output
 
@@ -84,7 +98,7 @@ final class EditorDocument {
 
     /// Adopt composed rows (from capture or import), padded to a rectangle.
     func load(_ newCells: [[ASCIICell]]) {
-        pushUndo()
+        registerUndo(name: "Replace Canvas")
         cells = GridEditing.rectangularized(newCells)
         if cells.isEmpty { cells = blankCanvas(cols: 80, rows: 24) }
         cursor = nil
@@ -110,7 +124,7 @@ final class EditorDocument {
 
     func resize(cols: Int, rows: Int) {
         guard cols != self.cols || rows != self.rows else { return }
-        pushUndo()
+        registerUndo(name: "Resize Canvas")
         cells = GridEditing.resize(cells, cols: cols, rows: rows)
         bump()
     }
@@ -131,7 +145,7 @@ final class EditorDocument {
 
     func beginStroke() {
         guard !strokeActive else { return }
-        pushUndo()
+        registerUndo(name: "Draw")
         strokeActive = true
     }
 
@@ -170,7 +184,7 @@ final class EditorDocument {
         var next = GridPoint(col: cur.col + d.delta.dc, row: cur.row + d.delta.dr)
         // Clamp at left/top; grow at right/bottom.
         if next.col < 0 || next.row < 0 { return nil }
-        pushUndo(coalesceKey: "line")
+        registerUndo(name: "Draw Line")
         growUnlessLocked(next, in: &cells)
 
         // Fix up the cell being exited (start, straight, corner or retrace).
@@ -201,7 +215,7 @@ final class EditorDocument {
     @discardableResult
     func insertCharacter(_ ch: Character) -> GridRect? {
         guard let cur = cursor else { return nil }
-        pushUndo(coalesceKey: "type")
+        registerUndo(name: "Typing")
         growUnlessLocked(cur, in: &cells)
         GridEditing.setCell(ASCIICell(glyph: ch, fg: fgColor, bg: bgColor), at: cur, in: &cells)
         let next = GridPoint(col: cur.col + 1, row: cur.row)
@@ -215,7 +229,7 @@ final class EditorDocument {
 
     func backspace() {
         guard let cur = cursor, cur.col > 0 else { return }
-        pushUndo(coalesceKey: "type")
+        registerUndo(name: "Typing")
         let prev = GridPoint(col: cur.col - 1, row: cur.row)
         GridEditing.setCell(.blank, at: prev, in: &cells)
         cursor = prev
@@ -225,7 +239,7 @@ final class EditorDocument {
 
     func deleteForward() {
         guard let cur = cursor else { return }
-        pushUndo(coalesceKey: "type")
+        registerUndo(name: "Typing")
         GridEditing.setCell(.blank, at: cur, in: &cells)
         bump()
     }
@@ -255,7 +269,7 @@ final class EditorDocument {
 
     func applySelectionFill(foreground: Bool) {
         guard let sel = clampedSelection() else { return }
-        pushUndo()
+        registerUndo(name: "Fill Selection")
         let spec = foreground ? selFgFill : selBgFill
         for r in sel.minRow...sel.maxRow {
             for c in sel.minCol...sel.maxCol {
@@ -269,7 +283,7 @@ final class EditorDocument {
 
     func clearSelectionColor(foreground: Bool) {
         guard let sel = clampedSelection() else { return }
-        pushUndo()
+        registerUndo(name: "Clear Color")
         for r in sel.minRow...sel.maxRow {
             for c in sel.minCol...sel.maxCol {
                 if foreground { cells[r][c].fg = nil } else { cells[r][c].bg = nil }
@@ -280,7 +294,7 @@ final class EditorDocument {
 
     func deleteSelectionContents() {
         guard let sel = clampedSelection() else { return }
-        pushUndo()
+        registerUndo(name: "Delete")
         for r in sel.minRow...sel.maxRow {
             for c in sel.minCol...sel.maxCol {
                 cells[r][c] = .blank
@@ -297,41 +311,37 @@ final class EditorDocument {
         return r
     }
 
-    // MARK: - Undo / redo
+    // MARK: - Clipboard support (used by the canvas responder-chain actions)
 
-    private var lastCoalesceKey: String?
-
-    /// Push an undo snapshot. Consecutive pushes sharing a `coalesceKey`
-    /// (e.g. a typing burst or a line stroke) collapse into one entry.
-    private func pushUndo(coalesceKey: String? = nil) {
-        if strokeActive { return }   // stroke already snapshotted at beginStroke()
-        if let key = coalesceKey, key == lastCoalesceKey { return }
-        lastCoalesceKey = coalesceKey
-        undoStack.append(Snapshot(cells: cells, cursor: cursor))
-        if undoStack.count > Self.undoLimit { undoStack.removeFirst() }
-        redoStack.removeAll()
+    /// Plain text of the current selection (glyphs only), or nil if no selection.
+    func selectionText() -> String? {
+        guard let sel = clampedSelection() else { return nil }
+        return (sel.minRow...sel.maxRow).map { r in
+            String((sel.minCol...sel.maxCol).map { cells[r][$0].glyph })
+        }.joined(separator: "\n")
     }
 
-    /// Break undo coalescing (call on mouse-down, tool switch, cursor place).
-    func breakUndoCoalescing() { lastCoalesceKey = nil }
-
-    func undo() {
-        guard let snap = undoStack.popLast() else { return }
-        redoStack.append(Snapshot(cells: cells, cursor: cursor))
-        cells = snap.cells
-        cursor = snap.cursor
-        lineDirection = nil
-        lastCoalesceKey = nil
+    func selectAll() {
+        guard rows > 0, cols > 0 else { return }
+        selection = GridRect(minCol: 0, minRow: 0, maxCol: cols - 1, maxRow: rows - 1)
         bump()
     }
 
-    func redo() {
-        guard let snap = redoStack.popLast() else { return }
-        undoStack.append(Snapshot(cells: cells, cursor: cursor))
-        cells = snap.cells
-        cursor = snap.cursor
-        lineDirection = nil
-        lastCoalesceKey = nil
+    /// Where a paste lands: the cursor, else the selection's top-left, else origin.
+    var pasteOrigin: GridPoint {
+        cursor ?? selection.map { GridPoint(col: $0.minCol, row: $0.minRow) } ?? GridPoint(col: 0, row: 0)
+    }
+
+    func pasteCells(_ newCells: [[ASCIICell]], at origin: GridPoint) {
+        guard !newCells.isEmpty else { return }
+        registerUndo(name: "Paste")
+        for (dr, row) in newCells.enumerated() {
+            for (dc, cell) in row.enumerated() {
+                let p = GridPoint(col: origin.col + dc, row: origin.row + dr)
+                growUnlessLocked(p, in: &cells)
+                GridEditing.setCell(cell, at: p, in: &cells)
+            }
+        }
         bump()
     }
 

@@ -108,7 +108,7 @@ struct EditorCanvasView: NSViewRepresentable {
 // MARK: - NSView
 
 @MainActor
-final class EditorCanvasNSView: NSView {
+final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
 
     private let document: EditorDocument
 
@@ -147,6 +147,11 @@ final class EditorCanvasNSView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        document.undoManager = window?.undoManager
+    }
 
     var schemeBackground: NSColor {
         document.canvasScheme == .dark
@@ -358,7 +363,6 @@ final class EditorCanvasNSView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let cell = cellAt(convert(event.locationInWindow, from: nil))
-        document.breakUndoCoalescing()
         switch document.tool {
         case .paint, .eraser:
             document.beginStroke()
@@ -432,6 +436,53 @@ final class EditorCanvasNSView: NSView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    // MARK: Standard Edit menu (responder-chain) actions
+
+    @objc func copy(_ sender: Any?) {
+        guard let text = document.selectionText() else { NSSound.beep(); return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
+
+    @objc func cut(_ sender: Any?) {
+        guard document.selection != nil else { NSSound.beep(); return }
+        copy(sender)
+        document.deleteSelectionContents()
+        fullInvalidate()
+    }
+
+    @objc func paste(_ sender: Any?) {
+        guard let text = NSPasteboard.general.string(forType: .string) else { NSSound.beep(); return }
+        document.pasteCells(ANSIImporter.parse(text), at: document.pasteOrigin)
+        updateFrameSize()
+        fullInvalidate()
+    }
+
+    override func selectAll(_ sender: Any?) {
+        document.selectAll()
+        fullInvalidate()
+    }
+
+    @objc func delete(_ sender: Any?) {
+        guard document.selection != nil else { NSSound.beep(); return }
+        document.deleteSelectionContents()
+        fullInvalidate()
+    }
+
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(copy(_:)), #selector(cut(_:)), #selector(delete(_:)):
+            return document.selection != nil
+        case #selector(paste(_:)):
+            return NSPasteboard.general.canReadObject(forClasses: [NSString.self], options: nil)
+        case #selector(selectAll(_:)):
+            return document.rows > 0
+        default:
+            return true
+        }
     }
 
     // MARK: Ruler marker (resize handle) callbacks

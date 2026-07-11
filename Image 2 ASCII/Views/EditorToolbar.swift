@@ -48,7 +48,6 @@ struct EditorToolbar: View {
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
                 }
-                .keyboardShortcut("z", modifiers: .command)
                 .disabled(!document.canUndo)
                 .help("Undo (⌘Z)")
 
@@ -57,7 +56,6 @@ struct EditorToolbar: View {
                 } label: {
                     Image(systemName: "arrow.uturn.forward")
                 }
-                .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!document.canRedo)
                 .help("Redo (⇧⌘Z)")
 
