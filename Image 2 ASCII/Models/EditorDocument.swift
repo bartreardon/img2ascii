@@ -183,7 +183,7 @@ final class EditorDocument {
     @discardableResult
     func lineArrow(_ d: Direction) -> GridRect? {
         guard let cur = cursor else { return nil }
-        var next = GridPoint(col: cur.col + d.delta.dc, row: cur.row + d.delta.dr)
+        let next = GridPoint(col: cur.col + d.delta.dc, row: cur.row + d.delta.dr)
         // Clamp at left/top; grow at right/bottom.
         if next.col < 0 || next.row < 0 { return nil }
         registerUndo(name: "Draw Line")
