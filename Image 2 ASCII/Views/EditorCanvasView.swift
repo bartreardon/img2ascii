@@ -30,14 +30,49 @@ struct EditorCanvasView: NSViewRepresentable {
         scroll.hasVerticalRuler = true
         let hRuler = CharacterRulerView(scrollView: scroll, orientation: .horizontalRuler)
         hRuler.clientView = canvas
+        hRuler.reservedThicknessForMarkers = 10
         scroll.horizontalRulerView = hRuler
         let vRuler = CharacterRulerView(scrollView: scroll, orientation: .verticalRuler)
         vRuler.clientView = canvas
+        vRuler.reservedThicknessForMarkers = 10
         scroll.verticalRulerView = vRuler
 
         canvas.updateGeometry()
+
+        // Draggable resize handles: one on each ruler at the grid's far edge.
+        let hImage = Self.handleImage(horizontal: true)
+        let hMarker = NSRulerMarker(rulerView: hRuler,
+                                    markerLocation: canvas.cellSize.width * CGFloat(document.cols),
+                                    image: hImage, imageOrigin: NSPoint(x: hImage.size.width / 2, y: 0))
+        hMarker.isMovable = true; hMarker.isRemovable = false
+        hRuler.addMarker(hMarker)
+
+        let vImage = Self.handleImage(horizontal: false)
+        let vMarker = NSRulerMarker(rulerView: vRuler,
+                                    markerLocation: canvas.cellSize.height * CGFloat(document.rows),
+                                    image: vImage, imageOrigin: NSPoint(x: vImage.size.width, y: vImage.size.height / 2))
+        vMarker.isMovable = true; vMarker.isRemovable = false
+        vRuler.addMarker(vMarker)
+
         applyChrome(scroll, canvas: canvas)
         return scroll
+    }
+
+    /// Small accent-colored triangle handle for a ruler resize marker.
+    private static func handleImage(horizontal: Bool) -> NSImage {
+        let size = NSSize(width: 11, height: 11)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.controlAccentColor.setFill()
+        let p = NSBezierPath()
+        if horizontal {   // points down toward the column boundary
+            p.move(to: NSPoint(x: 1, y: 10)); p.line(to: NSPoint(x: 10, y: 10)); p.line(to: NSPoint(x: 5.5, y: 1))
+        } else {          // points right toward the row boundary
+            p.move(to: NSPoint(x: 1, y: 1)); p.line(to: NSPoint(x: 1, y: 10)); p.line(to: NSPoint(x: 10, y: 5.5))
+        }
+        p.close(); p.fill()
+        image.unlockFocus()
+        return image
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
@@ -61,6 +96,10 @@ struct EditorCanvasView: NSViewRepresentable {
             guard let r = ruler as? CharacterRulerView else { continue }
             r.cellW = canvas.cellSize.width
             r.lineH = canvas.cellSize.height
+            let horizontal = r.orientation == .horizontalRuler
+            let edge = horizontal ? canvas.cellSize.width * CGFloat(document.cols)
+                                  : canvas.cellSize.height * CGFloat(document.rows)
+            r.markers?.first?.markerLocation = edge
             r.needsDisplay = true
         }
     }
@@ -393,6 +432,37 @@ final class EditorCanvasNSView: NSView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    // MARK: Ruler marker (resize handle) callbacks
+
+    override func rulerView(_ ruler: NSRulerView, shouldMove marker: NSRulerMarker) -> Bool {
+        // Temporarily enlarge the document view so the marker (whose travel is
+        // bounded by the view's length along the ruler) can be dragged far in a
+        // single gesture. didMove resizes the doc and restores the normal frame.
+        if ruler.orientation == .horizontalRuler {
+            setFrameSize(NSSize(width: max(frame.width, 1000 * cellW), height: frame.height))
+        } else {
+            setFrameSize(NSSize(width: frame.width, height: max(frame.height, 1000 * lineH)))
+        }
+        return true
+    }
+
+    override func rulerView(_ ruler: NSRulerView, willMove marker: NSRulerMarker, toLocation location: CGFloat) -> CGFloat {
+        let step = ruler.orientation == .horizontalRuler ? cellW : lineH
+        return CGFloat(max(1, Int((location / step).rounded()))) * step
+    }
+
+    override func rulerView(_ ruler: NSRulerView, didMove marker: NSRulerMarker) {
+        let step = ruler.orientation == .horizontalRuler ? cellW : lineH
+        let n = max(1, Int((marker.markerLocation / step).rounded()))
+        if ruler.orientation == .horizontalRuler {
+            document.resize(cols: n, rows: document.rows)
+        } else {
+            document.resize(cols: document.cols, rows: n)
+        }
+        updateFrameSize()
+        needsDisplay = true
     }
 
     private func handleArrow(_ d: Direction) {

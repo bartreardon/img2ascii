@@ -13,8 +13,6 @@ struct EditorControls: View {
     @Bindable var model: AppModel
     @State private var showingOpen = false
     @State private var openError: String?
-    @State private var widthText = ""
-    @State private var heightText = ""
 
     private var document: EditorDocument { model.editor }
 
@@ -81,28 +79,40 @@ struct EditorControls: View {
 
     private var sizeSection: some View {
         Section("Canvas size") {
-            LabeledContent("Current", value: "\(document.cols) × \(document.rows)")
-            HStack {
-                TextField("Width", text: $widthText, prompt: Text("\(document.cols)"))
-                    .frame(width: 60)
-                Text("×").foregroundStyle(.secondary)
-                TextField("Height", text: $heightText, prompt: Text("\(document.rows)"))
-                    .frame(width: 60)
-                Button("Apply") { applySize() }
-                    .disabled(Int(widthText) == nil && Int(heightText) == nil)
-            }
-            Text("Painting past the right/bottom edge grows the canvas automatically.")
+            sizeRow("Width", binding: widthBinding)
+            sizeRow("Height", binding: heightBinding)
+            Toggle("Lock size", isOn: Binding(get: { document.lockedSize },
+                                              set: { document.lockedSize = $0 }))
+            Text(document.lockedSize
+                 ? "Locked: drawing past the edge is clipped. Resize with the fields, steppers, or ruler handles."
+                 : "Type a value, use the steppers, drag the ruler handles, or paint past the right/bottom edge to grow.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
-    private func applySize() {
-        let cols = Int(widthText) ?? document.cols
-        let rows = Int(heightText) ?? document.rows
-        document.resize(cols: max(1, cols), rows: max(1, rows))
-        widthText = ""
-        heightText = ""
+    private func sizeRow(_ label: String, binding: Binding<Int>) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+            Spacer()
+            TextField(label, value: binding, format: .number)
+                .labelsHidden()
+                .multilineTextAlignment(.trailing)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 56)
+            Stepper(label, value: binding, in: 1...1000)
+                .labelsHidden()
+        }
     }
+
+    private var widthBinding: Binding<Int> {
+        Binding(get: { document.cols },
+                set: { document.resize(cols: max(1, $0), rows: document.rows) })
+    }
+    private var heightBinding: Binding<Int> {
+        Binding(get: { document.rows },
+                set: { document.resize(cols: document.cols, rows: max(1, $0)) })
+    }
+
 
     // MARK: Selection
 

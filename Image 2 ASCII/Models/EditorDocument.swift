@@ -54,6 +54,8 @@ final class EditorDocument {
     var fontSize: Double = 14
     var showGrid = false
     var showRulers = false
+    /// When true, drawing past the edge does NOT grow the canvas.
+    var lockedSize = false
     private(set) var hasEverCaptured = false
 
     // MARK: Undo
@@ -113,6 +115,13 @@ final class EditorDocument {
         bump()
     }
 
+    /// Grow the grid to include `p`, unless the canvas size is locked (in which
+    /// case draws past the edge are silently clipped by `setCell`).
+    private func growUnlessLocked(_ p: GridPoint, in cells: inout [[ASCIICell]]) {
+        guard !lockedSize else { return }
+        GridEditing.growToInclude(p, in: &cells)
+    }
+
     // MARK: - Painting
 
     /// The cell the paint tool stamps.
@@ -132,7 +141,7 @@ final class EditorDocument {
     @discardableResult
     func stroke(from a: GridPoint?, to b: GridPoint, erase: Bool) -> GridRect {
         let target: ASCIICell = erase ? .blank : paintCell
-        if !erase { GridEditing.growToInclude(b, in: &cells) }
+        if !erase { growUnlessLocked(b, in: &cells) }
         var dirty = GridRect(b, b)
         let points = a.map { GridEditing.bresenham(from: $0, to: b) } ?? [b]
         for p in points {
@@ -147,7 +156,7 @@ final class EditorDocument {
     // MARK: - Line / text tool
 
     func placeCursor(_ p: GridPoint) {
-        GridEditing.growToInclude(p, in: &cells)
+        growUnlessLocked(p, in: &cells)
         cursor = p
         textLineStartCol = p.col
         lineDirection = nil
@@ -162,7 +171,7 @@ final class EditorDocument {
         // Clamp at left/top; grow at right/bottom.
         if next.col < 0 || next.row < 0 { return nil }
         pushUndo(coalesceKey: "line")
-        GridEditing.growToInclude(next, in: &cells)
+        growUnlessLocked(next, in: &cells)
 
         // Fix up the cell being exited (start, straight, corner or retrace).
         let exitGlyph = LineToolLogic.exitGlyph(prev: lineDirection, next: d, style: lineStyle)
@@ -182,7 +191,7 @@ final class EditorDocument {
     func moveCursor(_ d: Direction) {
         guard let cur = cursor else { return }
         let next = GridPoint(col: max(0, cur.col + d.delta.dc), row: max(0, cur.row + d.delta.dr))
-        GridEditing.growToInclude(next, in: &cells)
+        growUnlessLocked(next, in: &cells)
         cursor = next
         lineDirection = nil
         bump()
@@ -193,10 +202,10 @@ final class EditorDocument {
     func insertCharacter(_ ch: Character) -> GridRect? {
         guard let cur = cursor else { return nil }
         pushUndo(coalesceKey: "type")
-        GridEditing.growToInclude(cur, in: &cells)
+        growUnlessLocked(cur, in: &cells)
         GridEditing.setCell(ASCIICell(glyph: ch, fg: fgColor, bg: bgColor), at: cur, in: &cells)
         let next = GridPoint(col: cur.col + 1, row: cur.row)
-        GridEditing.growToInclude(next, in: &cells)
+        growUnlessLocked(next, in: &cells)
         cursor = next
         lineDirection = nil
         noteRecent(ch)
@@ -224,7 +233,7 @@ final class EditorDocument {
     func carriageReturn() {
         guard let cur = cursor else { return }
         let next = GridPoint(col: textLineStartCol, row: cur.row + 1)
-        GridEditing.growToInclude(next, in: &cells)
+        growUnlessLocked(next, in: &cells)
         cursor = next
         lineDirection = nil
         bump()
