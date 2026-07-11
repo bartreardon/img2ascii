@@ -4,16 +4,12 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var model = AppModel()
-    @State private var showingImporter = false
-    @State private var exporter = ExporterState()
-    @State private var pngExporter = PNGExporterState()
-    @State private var showingPNGSheet = false
 
     var body: some View {
+        @Bindable var model = model
         NavigationSplitView {
             ControlsPanel(model: model)
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
@@ -21,27 +17,13 @@ struct ContentView: View {
             detail
         }
         .toolbar { toolbarContent }
-        .fileImporter(isPresented: $showingImporter,
-                      allowedContentTypes: ImageLoader.supportedContentTypes,
-                      allowsMultipleSelection: false) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                model.loadImage(from: url)
-            } else if case .failure(let error) = result {
-                model.errorMessage = error.localizedDescription
+        .focusedSceneValue(\.appModel, model)
+        .sheet(isPresented: $model.showPNGSheet) {
+            PNGExportSheet(grid: model.grid) { data in
+                ExportService.savePNG(data, suggestedName: "banner.png")
             }
         }
-        .fileExporter(isPresented: $exporter.isPresented,
-                      document: TextFileDocument(text: exporter.text),
-                      contentType: .plainText,
-                      defaultFilename: exporter.filename) { _ in }
-        .fileExporter(isPresented: $pngExporter.isPresented,
-                      document: PNGFileDocument(data: pngExporter.data),
-                      contentType: .png,
-                      defaultFilename: "banner.png") { _ in }
-        .sheet(isPresented: $showingPNGSheet) {
-            PNGExportSheet(grid: model.grid) { data in pngExporter.present(data: data) }
-        }
-        .alert("Couldn’t load image",
+        .alert("Something went wrong",
                isPresented: Binding(get: { model.errorMessage != nil },
                                     set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
@@ -59,6 +41,9 @@ struct ContentView: View {
                 EditorToolbar(document: model.editor)
                 Divider()
                 EditorCanvasView(document: model.editor)
+                    .dropDestination(for: URL.self) { urls, _ in
+                        model.openEditorText(from: urls.first)
+                    }
             } else if model.settings.generatorMode == .text {
                 DualPreviewView(text: model.preview, isEmpty: model.grid.rows == 0)
             } else if model.hasImage {
@@ -66,7 +51,7 @@ struct ContentView: View {
                 Divider()
                 DualPreviewView(text: model.preview, isEmpty: model.grid.rows == 0)
             } else {
-                ImageDropView(onOpen: { showingImporter = true },
+                ImageDropView(onOpen: { model.openImage() },
                               onDrop: { url in model.loadImage(from: url) })
                     .padding(40)
             }
@@ -93,7 +78,7 @@ struct ContentView: View {
                 ProgressView().controlSize(.small)
             }
             Spacer()
-            Button("Replace…") { showingImporter = true }
+            Button("Replace…") { model.openImage() }
             Button("Clear") { model.clearImage() }
         }
         .padding(8)
@@ -104,64 +89,33 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            Button { showingImporter = true } label: {
+            Button { model.openImage() } label: {
                 Label("Open Image", systemImage: "photo.badge.plus")
             }
+            .help("Open an image to convert (⌘O)")
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                Button("Copy ANSI (colored)") {
-                    ExportService.copyToPasteboard(model.outputString(colored: true))
-                }
-                Button("Copy plain text") {
-                    ExportService.copyToPasteboard(model.outputString(colored: false))
-                }
+                Button("Copy as ANSI (colored)") { model.copyText(colored: true) }
+                Button("Copy as plain text") { model.copyText(colored: false) }
+                Button("Copy as image") { model.copyImage() }
             } label: {
                 Label("Copy", systemImage: "doc.on.doc")
             }
-            .disabled(model.grid.rows == 0)
+            .menuIndicator(.hidden)
+            .disabled(!model.hasOutput)
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                Button("Export ANSI (colored)…") {
-                    exporter.present(text: model.outputString(colored: true), filename: "banner.txt")
-                }
-                Button("Export plain text…") {
-                    exporter.present(text: model.outputString(colored: false), filename: "banner.txt")
-                }
+                Button("Export ANSI (colored)…") { model.exportText(colored: true) }
+                Button("Export plain text…") { model.exportText(colored: false) }
                 Divider()
-                Button("Export PNG…") { showingPNGSheet = true }
+                Button("Export PNG…") { model.showPNGSheet = true }
             } label: {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
-            .disabled(model.grid.rows == 0)
+            .disabled(!model.hasOutput)
         }
-    }
-}
-
-/// Small holder so a single `.fileExporter` can serve both colored & plain saves.
-@Observable
-final class ExporterState {
-    var isPresented = false
-    var text = ""
-    var filename = "banner.txt"
-
-    func present(text: String, filename: String) {
-        self.text = text
-        self.filename = filename
-        self.isPresented = true
-    }
-}
-
-/// Holds pre-rendered PNG data for the PNG `.fileExporter`.
-@Observable
-final class PNGExporterState {
-    var isPresented = false
-    var data = Data()
-
-    func present(data: Data) {
-        self.data = data
-        self.isPresented = true
     }
 }
 

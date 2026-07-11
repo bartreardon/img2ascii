@@ -11,8 +11,6 @@ import UniformTypeIdentifiers
 
 struct EditorControls: View {
     @Bindable var model: AppModel
-    @State private var showingOpen = false
-    @State private var openError: String?
 
     private var document: EditorDocument { model.editor }
 
@@ -40,38 +38,11 @@ struct EditorControls: View {
             }
 
             Button {
-                showingOpen = true
+                model.openEditorFile()
             } label: {
                 Label("Open text file…", systemImage: "folder")
             }
-            .fileImporter(isPresented: $showingOpen,
-                          allowedContentTypes: [.plainText, .data],
-                          allowsMultipleSelection: false) { result in
-                handleOpen(result)
-            }
-
-            if let openError {
-                Text(openError).font(.caption2).foregroundStyle(.red)
-            }
-        }
-    }
-
-    private func handleOpen(_ result: Result<[URL], Error>) {
-        openError = nil
-        guard case .success(let urls) = result, let url = urls.first else { return }
-        let access = url.startAccessingSecurityScopedResource()
-        defer { if access { url.stopAccessingSecurityScopedResource() } }
-        do {
-            let data = try Data(contentsOf: url)
-            let text = String(decoding: data, as: UTF8.self)
-            let cells = ANSIImporter.parse(text)
-            guard !cells.isEmpty else {
-                openError = "The file contains no text."
-                return
-            }
-            document.load(cells)
-        } catch {
-            openError = error.localizedDescription
+            .help("Open a plain or ANSI-colored text file to edit (⇧⌘O)")
         }
     }
 

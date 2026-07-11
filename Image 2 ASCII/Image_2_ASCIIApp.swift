@@ -13,5 +13,6 @@ struct Image_2_ASCIIApp: App {
         WindowGroup {
             ContentView()
         }
+        .commands { AppCommands() }
     }
 }

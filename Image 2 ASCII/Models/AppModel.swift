@@ -9,6 +9,7 @@
 
 import SwiftUI
 import Observation
+import UniformTypeIdentifiers
 
 @Observable
 @MainActor
@@ -54,9 +55,72 @@ final class AppModel {
     }
 
     var hasImage: Bool { pixelBuffer != nil }
+    var hasOutput: Bool { grid.rows > 0 }
+
+    /// Drives the PNG export options sheet (settable from menu or toolbar).
+    var showPNGSheet = false
 
     private var pixelBuffer: PixelBuffer?
     private var regenTask: Task<Void, Never>?
+
+    // MARK: - File / clipboard intents (shared by menu + toolbar)
+
+    func openImage() {
+        guard let url = ExportService.openFile(contentTypes: ImageLoader.supportedContentTypes) else { return }
+        settings.generatorMode = .image
+        loadImage(from: url)
+    }
+
+    func openEditorFile() {
+        guard let url = ExportService.openFile(contentTypes: [.plainText, .text, .data]) else { return }
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            errorMessage = "Couldn’t read \(url.lastPathComponent)."
+            return
+        }
+        loadEditorText(String(decoding: data, as: UTF8.self))
+    }
+
+    /// Load a dropped text/ANSI file into the editor. Returns whether it loaded.
+    @discardableResult
+    func openEditorText(from url: URL?) -> Bool {
+        guard let url else { return false }
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else { return false }
+        loadEditorText(String(decoding: data, as: UTF8.self))
+        return true
+    }
+
+    /// Parse text/ANSI into the editor and switch to editor mode.
+    func loadEditorText(_ text: String) {
+        let cells = ANSIImporter.parse(text)
+        guard !cells.isEmpty else { return }
+        settings.generatorMode = .editor
+        editor.load(cells)
+    }
+
+    func newEditorCanvas() {
+        settings.generatorMode = .editor
+        editor.newCanvas()
+    }
+
+    func exportText(colored: Bool) {
+        guard hasOutput else { return }
+        ExportService.saveText(outputString(colored: colored), suggestedName: "banner.txt")
+    }
+
+    func copyText(colored: Bool) {
+        guard hasOutput else { return }
+        ExportService.copyString(outputString(colored: colored))
+    }
+
+    /// Copy the current output to the pasteboard as an image.
+    func copyImage() {
+        guard hasOutput, let data = PNGRenderer.render(grid: grid, fontSize: 16, defaultColor: .white) else { return }
+        ExportService.copyImage(pngData: data)
+    }
 
     // MARK: - Loading
 
