@@ -89,7 +89,7 @@ struct EditorToolbar: View {
                     .help("Zoom")
             }
 
-            if document.tool != .select {
+            if document.tool == .paint {
                 glyphPalettes
             }
         }

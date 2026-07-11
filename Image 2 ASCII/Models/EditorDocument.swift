@@ -32,6 +32,8 @@ final class EditorDocument {
     var selection: GridRect?
     private var lineDirection: Direction?
     private var textLineStartCol = 0
+    /// Anchor for keyboard (Shift-arrow) selection.
+    private var selAnchor: GridPoint?
 
     // MARK: Palette state
 
@@ -201,14 +203,70 @@ final class EditorDocument {
         return GridRect(cur, next)
     }
 
-    /// Move the cursor without drawing (plain arrows in select-free navigation).
-    func moveCursor(_ d: Direction) {
+    /// Ensure a cursor exists (used when arrow-navigating from an empty state).
+    func ensureCursor() {
+        if cursor == nil { cursor = GridPoint(col: 0, row: 0); bump() }
+    }
+
+    func setCursor(_ p: GridPoint) {
+        cursor = clampToBounds(p)
+        bump()
+    }
+
+    /// Move the cursor (clamped to the canvas). `extend` grows a keyboard
+    /// selection from an anchor (Shift-arrow); otherwise the selection collapses.
+    func moveCursor(_ d: Direction, extend: Bool) {
+        ensureCursor()
         guard let cur = cursor else { return }
-        let next = GridPoint(col: max(0, cur.col + d.delta.dc), row: max(0, cur.row + d.delta.dr))
-        growUnlessLocked(next, in: &cells)
+        let next = clampToBounds(GridPoint(col: cur.col + d.delta.dc, row: cur.row + d.delta.dr))
+        if extend {
+            if selAnchor == nil { selAnchor = cur }
+            selection = GridRect(selAnchor!, next)
+        } else {
+            selAnchor = nil
+            selection = nil
+        }
         cursor = next
         lineDirection = nil
         bump()
+    }
+
+    /// Paint the current glyph at the cursor (paint tool, Space key).
+    func placeGlyphAtCursor() {
+        ensureCursor()
+        guard let cur = cursor else { return }
+        registerUndo(name: "Paint")
+        growUnlessLocked(cur, in: &cells)
+        GridEditing.setCell(ASCIICell(glyph: paintGlyph, fg: fgColor, bg: bgColor), at: cur, in: &cells)
+        noteRecent(paintGlyph)
+        bump()
+    }
+
+    /// Erase the cell at the cursor (eraser tool, Delete key).
+    func eraseAtCursor() {
+        guard let cur = cursor else { return }
+        registerUndo(name: "Erase")
+        GridEditing.setCell(.blank, at: cur, in: &cells)
+        bump()
+    }
+
+    func selectionContains(_ p: GridPoint) -> Bool {
+        guard let sel = selection else { return false }
+        return p.col >= sel.minCol && p.col <= sel.maxCol && p.row >= sel.minRow && p.row <= sel.maxRow
+    }
+
+    /// The selection as a standalone grid (for drag-out / copy-as-image).
+    func selectionGrid() -> ASCIIGrid? {
+        guard let sel = clampedSelection() else { return nil }
+        let rows = (sel.minRow...sel.maxRow).map { r in Array(cells[r][sel.minCol...sel.maxCol]) }
+        return ASCIIGrid(cells: rows, background: .none, border: nil)
+    }
+
+    func clampedSelectionRect() -> GridRect? { clampedSelection() }
+
+    private func clampToBounds(_ p: GridPoint) -> GridPoint {
+        GridPoint(col: min(max(0, p.col), max(0, cols - 1)),
+                  row: min(max(0, p.row), max(0, rows - 1)))
     }
 
     /// Type a character at the cursor and advance. Returns the dirty region.

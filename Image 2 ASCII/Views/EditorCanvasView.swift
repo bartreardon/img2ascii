@@ -108,7 +108,7 @@ struct EditorCanvasView: NSViewRepresentable {
 // MARK: - NSView
 
 @MainActor
-final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
+final class EditorCanvasNSView: NSView, NSUserInterfaceValidations, NSDraggingSource {
 
     private let document: EditorDocument
 
@@ -131,6 +131,8 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
 
     private var lastPaintCell: GridPoint?
     private var selectionAnchor: GridPoint?
+    /// Set on mouse-down inside an existing selection; a drag then exports it.
+    private var dragOutCandidate: Bool = false
     private var cursorVisible = true
     private var blinkTimer: Timer?
 
@@ -347,7 +349,7 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
             ctx.setLineWidth(1)
             ctx.stroke(rect.insetBy(dx: 0.5, dy: 0.5))
         }
-        if document.tool == .line, let cur = document.cursor, cursorVisible {
+        if let cur = document.cursor, cursorVisible {
             let rect = rectForCells(GridRect(cur, cur))
             ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
             ctx.setLineWidth(2)
@@ -376,6 +378,7 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let cell = cellAt(convert(event.locationInWindow, from: nil))
+        document.setCursor(cell)
         switch document.tool {
         case .paint, .eraser:
             document.beginStroke()
@@ -388,8 +391,13 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
             updateFrameSize()
             invalidate(GridRect(cell, cell))
         case .select:
-            selectionAnchor = cell
-            document.setSelection(GridRect(cell, cell))
+            if document.selectionContains(cell) {
+                // Click inside the selection begins a drag-out on movement.
+                dragOutCandidate = true
+            } else {
+                selectionAnchor = cell
+                document.setSelection(GridRect(cell, cell))
+            }
             fullInvalidate()
         }
     }
@@ -405,6 +413,11 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
             updateFrameSize()
             invalidate(dirty)
         case .select:
+            if dragOutCandidate {
+                dragOutCandidate = false
+                beginSelectionDrag(with: event)
+                return
+            }
             guard let anchor = selectionAnchor else { return }
             document.setSelection(GridRect(anchor, cell))
             fullInvalidate()
@@ -417,28 +430,37 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
         document.endStroke()
         lastPaintCell = nil
         selectionAnchor = nil
+        dragOutCandidate = false
     }
 
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) { super.keyDown(with: event); return }
+        let shift = event.modifierFlags.contains(.shift)
 
         if let special = event.specialKey {
             switch special {
-            case .upArrow:    handleArrow(.up); return
-            case .downArrow:  handleArrow(.down); return
-            case .leftArrow:  handleArrow(.left); return
-            case .rightArrow: handleArrow(.right); return
-            case .delete:     document.backspace(); fullInvalidate(); return
-            case .deleteForward: document.deleteForward(); fullInvalidate(); return
+            case .upArrow:    arrow(.up, shift: shift); return
+            case .downArrow:  arrow(.down, shift: shift); return
+            case .leftArrow:  arrow(.left, shift: shift); return
+            case .rightArrow: arrow(.right, shift: shift); return
+            case .delete:        handleDeleteKey(forward: false); return
+            case .deleteForward: handleDeleteKey(forward: true); return
             case .carriageReturn, .enter:
-                document.carriageReturn(); updateFrameSize(); fullInvalidate(); return
+                if document.tool == .line { document.carriageReturn(); updateFrameSize(); fullInvalidate() }
+                return
             default: break
             }
         }
         if event.keyCode == 53 { document.escape(); fullInvalidate(); return }   // Escape
 
+        // Space: the paint tool stamps the current glyph at the cursor.
+        if document.tool == .paint, event.charactersIgnoringModifiers == " " {
+            document.placeGlyphAtCursor(); updateFrameSize(); fullInvalidate(); return
+        }
+
+        // Line tool: typing inserts characters.
         if document.tool == .line,
            let chars = event.charactersIgnoringModifiers,
            let ch = chars.first,
@@ -449,6 +471,29 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
             return
         }
         super.keyDown(with: event)
+    }
+
+    /// Arrow keys: draw (line tool) or move the cursor (Shift extends a selection).
+    private func arrow(_ d: Direction, shift: Bool) {
+        if document.tool == .line {
+            if let dirty = document.lineArrow(d) { updateFrameSize(); invalidate(dirty) }
+        } else {
+            document.moveCursor(d, extend: shift && document.tool == .select)
+            updateFrameSize()
+            fullInvalidate()
+        }
+    }
+
+    private func handleDeleteKey(forward: Bool) {
+        switch document.tool {
+        case .line:
+            forward ? document.deleteForward() : document.backspace()
+        default:
+            if document.selection != nil { document.deleteSelectionContents() }
+            else { document.eraseAtCursor() }
+        }
+        updateFrameSize()
+        fullInvalidate()
     }
 
     // MARK: Standard Edit menu (responder-chain) actions
@@ -529,13 +574,53 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
         needsDisplay = true
     }
 
-    private func handleArrow(_ d: Direction) {
-        guard document.tool == .line else { return }
-        if let dirty = document.lineArrow(d) {
-            updateFrameSize()
-            invalidate(dirty)
+    // MARK: Selection drag-out + context menu
+
+    private func beginSelectionDrag(with event: NSEvent) {
+        guard let sel = document.clampedSelectionRect(),
+              let text = document.selectionText() else { return }
+
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        if let grid = document.selectionGrid(),
+           let png = PNGRenderer.render(grid: grid, fontSize: max(12, appliedFontSize),
+                                        defaultColor: document.canvasScheme == .dark ? .white : .black) {
+            item.setData(png, forType: .png)
         }
+
+        let rect = rectForCells(sel)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        dragItem.setDraggingFrame(rect, contents: snapshot(of: rect))
+        beginDraggingSession(with: [dragItem], event: event, source: self)
     }
+
+    private func snapshot(of rect: NSRect) -> NSImage? {
+        guard let rep = bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+        cacheDisplay(in: rect, to: rep)
+        let image = NSImage(size: rect.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    nonisolated func draggingSession(_ session: NSDraggingSession,
+                                     sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .copy
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        window?.makeFirstResponder(self)
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Cut", action: #selector(cut(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Delete", action: #selector(delete(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Select All", action: #selector(selectAll(_:)), keyEquivalent: "")
+        for item in menu.items { item.target = self }
+        return menu
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { validateUserInterfaceItem(item) }
 
     private func fullInvalidate() {
         needsDisplay = true
@@ -549,7 +634,7 @@ final class EditorCanvasNSView: NSView, NSUserInterfaceValidations {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.cursorVisible.toggle()
-                if self.document.tool == .line, let cur = self.document.cursor {
+                if let cur = self.document.cursor {
                     self.setNeedsDisplay(self.rectForCells(GridRect(cur, cur)).insetBy(dx: -2, dy: -2))
                 }
             }
