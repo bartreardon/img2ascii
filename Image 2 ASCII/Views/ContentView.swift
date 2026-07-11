@@ -45,11 +45,17 @@ struct ContentView: View {
                         model.openEditorText(from: urls.first)
                     }
             } else if model.settings.generatorMode == .text {
-                DualPreviewView(text: model.preview, isEmpty: model.grid.rows == 0)
+                DualPreviewView(text: model.preview, isEmpty: model.grid.rows == 0,
+                                dragBanner: model.hasOutput
+                                    ? BannerTransfer(grid: model.grid, depth: model.settings.colorDepth)
+                                    : nil)
             } else if model.hasImage {
                 sourceBar
                 Divider()
-                DualPreviewView(text: model.preview, isEmpty: model.grid.rows == 0)
+                DualPreviewView(text: model.preview, isEmpty: model.grid.rows == 0,
+                                dragBanner: model.hasOutput
+                                    ? BannerTransfer(grid: model.grid, depth: model.settings.colorDepth)
+                                    : nil)
             } else {
                 ImageDropView(onOpen: { model.openImage() },
                               onDrop: { url in model.loadImage(from: url) })

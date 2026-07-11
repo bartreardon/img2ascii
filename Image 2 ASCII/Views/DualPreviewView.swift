@@ -43,6 +43,8 @@ enum PreviewBackgroundMode: String, CaseIterable, Identifiable {
 struct DualPreviewView: View {
     let text: AttributedString
     let isEmpty: Bool
+    /// When set, a "Drag out" chip lets the user drag the banner to Finder/apps.
+    var dragBanner: BannerTransfer? = nil
 
     @State private var mode: PreviewBackgroundMode = .dark
     @State private var fontSize: Double = 9
@@ -67,6 +69,15 @@ struct DualPreviewView: View {
                 .frame(maxWidth: 190)
 
                 Spacer()
+
+                if let dragBanner {
+                    Label("Drag out", systemImage: "arrow.up.doc")
+                        .font(.caption)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.quaternary, in: Capsule())
+                        .draggable(dragBanner)
+                        .help("Drag to Finder or another app to export as PNG or text")
+                }
 
                 Image(systemName: "textformat.size.smaller")
                     .foregroundStyle(.secondary)
